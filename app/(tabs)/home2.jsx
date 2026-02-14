@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -9,11 +9,14 @@ import {
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import AddSubSheet from "../../components/addSubscription.jsx";
 
 export default function home() {
   const [userName, setUserName] = useState("User");
   const [greeting, setGreeting] = useState("Good Morning");
   const [profileImage, setProfileImage] = useState("👤");
+
+  const sheetRef = useRef(null);
 
   useEffect(() => {
     // Pick greeting based on time of day
@@ -33,6 +36,7 @@ export default function home() {
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor="#f8fafc" />
+      <AddSubSheet ref={sheetRef} />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.container}>
           {/* Header */}
@@ -49,7 +53,10 @@ export default function home() {
             </View>
 
             {/* Right: Add button */}
-            <TouchableOpacity style={styles.addButton}>
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => sheetRef.current?.expand()}
+            >
               <Ionicons name="add" size={28} color="#8e44ad" />
             </TouchableOpacity>
           </View>
