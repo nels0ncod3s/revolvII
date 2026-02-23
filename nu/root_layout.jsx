@@ -1,6 +1,7 @@
-import { Stack } from "expo-router";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SubscriptionProvider } from "../Context/subscriptionContext";
+// app/_layout.jsx
+import { Stack } from 'expo-router';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SubscriptionProvider } from '../Context/subscriptionContext';
 
 export default function RootLayout() {
   return (
