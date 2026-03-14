@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useApp } from '../../Context/appContext';
 
 /* ------------------ Reusable Item ------------------ */
 
@@ -22,22 +23,27 @@ function SettingsItem({
   onPress,
   right,
   showArrow = true,
+  theme, // Receive theme prop
 }) {
   return (
-    <TouchableOpacity style={styles.item} onPress={onPress} activeOpacity={0.7}>
+    <TouchableOpacity 
+      style={[styles.item, { borderBottomColor: theme.border }]} 
+      onPress={onPress} 
+      activeOpacity={0.7}
+    >
       <View style={styles.itemLeft}>
-        <View style={styles.iconBox}>
+        <View style={[styles.iconBox, { backgroundColor: theme.iconBg }]}>
           <Ionicons name={icon} size={22} color="#6366f1" />
         </View>
 
         <View style={{ flex: 1 }}>
-          <Text style={styles.itemTitle}>{title}</Text>
-          {subtitle && <Text style={styles.itemSubtitle}>{subtitle}</Text>}
+          <Text style={[styles.itemTitle, { color: theme.text }]}>{title}</Text>
+          {subtitle && <Text style={[styles.itemSubtitle, { color: theme.subText }]}>{subtitle}</Text>}
         </View>
       </View>
 
       {right ? right : showArrow && (
-        <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+        <Ionicons name="chevron-forward" size={18} color={theme.subText} />
       )}
     </TouchableOpacity>
   );
@@ -47,130 +53,108 @@ function SettingsItem({
 
 export default function Settings() {
   const router = useRouter();
-
-  const [darkMode, setDarkMode] = useState(false);
-  const [language, setLanguage] = useState('English');
-  const [currency, setCurrency] = useState('₦ Nigerian Naira');
-
-  const signOut = () =>
-    Alert.alert('Sign out', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => router.replace('/onboarding') },
-    ]);
+  
+  // Use Global State
+  const { darkMode, setDarkMode, currency, updateCurrency, theme } = useApp();
 
   const selectLanguage = () =>
     Alert.alert('Language', 'Choose language', [
-      { text: 'English', onPress: () => setLanguage('English') },
-      { text: 'Yoruba', onPress: () => setLanguage('Yoruba') },
-      { text: 'Igbo', onPress: () => setLanguage('Igbo') },
-      { text: 'Hausa', onPress: () => setLanguage('Hausa') },
+      { text: 'English', onPress: () => console.log('English selected') },
       { text: 'Cancel', style: 'cancel' },
     ]);
 
   const selectCurrency = () =>
-    Alert.alert('Currency', 'Choose currency', [
-      { text: '₦ Nigerian Naira', onPress: () => setCurrency('₦ Nigerian Naira') },
-      { text: '$ US Dollar', onPress: () => setCurrency('$ US Dollar') },
-      { text: '€ Euro', onPress: () => setCurrency('€ Euro') },
-      { text: '£ Pound', onPress: () => setCurrency('£ Pound') },
+    Alert.alert('Currency', 'Choose display currency', [
+      { text: '₦ Nigerian Naira (NGN)', onPress: () => updateCurrency('NGN') },
+      { text: '$ US Dollar (USD)', onPress: () => updateCurrency('USD') },
+      { text: '£ Pound (GBP)', onPress: () => updateCurrency('GBP') },
+      { text: '€ Euro (EUR)', onPress: () => updateCurrency('EUR') },
       { text: 'Cancel', style: 'cancel' },
     ]);
 
   return (
     <>
-      <StatusBar barStyle="dark-content" />
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} />
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]} edges={['top']}>
         <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
           
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>Settings</Text>
-            <Text style={styles.subtitle}>Manage your preferences</Text>
+            <Text style={[styles.title, { color: theme.text }]}>Settings</Text>
+            <Text style={[styles.subtitle, { color: theme.subText }]}>Manage your preferences</Text>
           </View>
 
           {/* Profile */}
-          <Section title="Profile">
+          <Section title="Profile" theme={theme}>
             <SettingsItem
               icon="person-outline"
               title="Edit profile"
               subtitle="Personal information"
               onPress={() => Alert.alert('Coming soon')}
+              theme={theme}
             />
           </Section>
 
           {/* Preferences */}
-          <Section title="Preferences">
+          <Section title="Preferences" theme={theme}>
             <SettingsItem
               icon="moon-outline"
               title="Dark mode"
-              subtitle="Reduce eye strain"
+              subtitle={darkMode ? "On" : "Off"}
+              theme={theme}
               right={
                 <Switch
                   value={darkMode}
                   onValueChange={setDarkMode}
                   trackColor={{ false: '#e5e7eb', true: '#6366f1' }}
+                  ios_backgroundColor="#e5e7eb"
                 />
               }
               showArrow={false}
             />
 
             <SettingsItem
-              icon="language-outline"
-              title="Language"
-              subtitle={language}
-              onPress={selectLanguage}
-            />
-
-            <SettingsItem
               icon="card-outline"
               title="Currency"
-              subtitle={currency}
+              subtitle={`${currency.symbol} ${currency.code}`}
               onPress={selectCurrency}
+              theme={theme}
+            />
+            
+             <SettingsItem
+              icon="language-outline"
+              title="Language"
+              subtitle="English"
+              onPress={selectLanguage}
+              theme={theme}
             />
           </Section>
 
-          {/* App */}
-          <Section title="App">
-            <SettingsItem
-              icon="notifications-outline"
-              title="Notifications"
-              onPress={() => Alert.alert('Coming soon')}
+          {/* App Info & About */}
+          <Section title="About App" theme={theme}>
+             <SettingsItem
+              icon="information-circle-outline"
+              title="About Us"
+              subtitle="Who we are & Socials"
+              onPress={() => router.push('/about')}
+              theme={theme}
             />
 
             <SettingsItem
               icon="shield-checkmark-outline"
               title="Privacy & security"
               onPress={() => Alert.alert('Coming soon')}
+              theme={theme}
             />
 
             <SettingsItem
-              icon="help-circle-outline"
-              title="Help & support"
-              onPress={() => Alert.alert('Coming soon')}
-            />
-          </Section>
-
-          {/* About */}
-          <Section title="About">
-            <SettingsItem
-              icon="information-circle-outline"
+              icon="layers-outline"
               title="App version"
-              subtitle="v1.0.0"
+              subtitle="v1.0.2"
               showArrow={false}
-            />
-
-            <SettingsItem
-              icon="document-text-outline"
-              title="Terms & Privacy"
-              onPress={() => Alert.alert('Coming soon')}
+              theme={theme}
             />
           </Section>
-
-          {/* Sign out */}
-          <TouchableOpacity style={styles.logout} onPress={signOut}>
-            <Ionicons name="log-out-outline" size={20} color="#ef4444" />
-            <Text style={styles.logoutText}>Sign Out</Text>
-          </TouchableOpacity>
 
         </ScrollView>
       </SafeAreaView>
@@ -180,11 +164,11 @@ export default function Settings() {
 
 /* ------------------ Section Wrapper ------------------ */
 
-function Section({ title, children }) {
+function Section({ title, children, theme }) {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <View style={styles.card}>{children}</View>
+      <Text style={[styles.sectionTitle, { color: theme.text }]}>{title}</Text>
+      <View style={[styles.card, { backgroundColor: theme.card }]}>{children}</View>
     </View>
   );
 }
@@ -194,7 +178,7 @@ function Section({ title, children }) {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    // Background color is handled inline via theme
   },
   container: {
     paddingBottom: 32,
@@ -205,11 +189,9 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 30,
     fontWeight: '800',
-    color: '#0f172a',
   },
   subtitle: {
     marginTop: 4,
-    color: '#64748b',
     fontSize: 15,
   },
   section: {
@@ -220,13 +202,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     fontSize: 16,
     fontWeight: '700',
-    color: '#0f172a',
   },
   card: {
-    backgroundColor: '#fff',
     marginHorizontal: 16,
     borderRadius: 16,
     overflow: 'hidden',
+    // Shadow for generic look
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
   item: {
     padding: 16,
@@ -234,7 +219,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
   },
   itemLeft: {
     flexDirection: 'row',
@@ -245,7 +229,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: '#eef2ff',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
@@ -253,28 +236,9 @@ const styles = StyleSheet.create({
   itemTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#0f172a',
   },
   itemSubtitle: {
     fontSize: 13,
-    color: '#64748b',
     marginTop: 2,
-  },
-  logout: {
-    marginTop: 40,
-    marginHorizontal: 20,
-    padding: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  logoutText: {
-    color: '#ef4444',
-    fontWeight: '600',
-    fontSize: 16,
   },
 });

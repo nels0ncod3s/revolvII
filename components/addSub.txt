@@ -1,82 +1,583 @@
-// components/addSubscription.jsx
-import React, { forwardRef, useMemo, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
-import BottomSheet, { BottomSheetTextInput, BottomSheetView } from "@gorhom/bottom-sheet";
-import { useSubscriptions } from '../Context/subscriptionContext';
+import React, { forwardRef, useImperativeHandle, useState, useRef, useEffect } from "react";
+import {
+  View, Text, StyleSheet, TouchableOpacity, Alert,
+  TextInput, Switch, ScrollView, Modal, Platform,
+  Animated, PanResponder, Dimensions, Image,
+} from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { Ionicons } from "@expo/vector-icons";
+import SwipeableModal from "./SwipeableModal";
+import { useSubscriptions } from "../Context/subscriptionContext";
+import { useApp } from "../Context/appContext";
 
-const AddSubSheet = forwardRef((props, ref) => {
-  const snapPoints = useMemo(() => ["60%"], []);
-  const { addSubscription } = useSubscriptions(); // <--- USE CONTEXT
-  
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
+// ─── Constants ────────────────────────────────────────────────────────────────
+const EMOJI_ICONS = [
+  "🎬","🎵","📺","🎮","📰","☁️","💼","🏋️","📚","🛒",
+  "🍔","🚗","💊","🔒","📱","⭐","🎧","🏠","✈️","💡",
+  "🎨","📷","🎙️","🧘","🤖","🔔",
+];
+const CYCLES    = ["Weekly","Monthly","Yearly"];
+const CATEGORIES= ["Entertainment","Music","Gaming","Productivity","Cloud Storage",
+                   "News & Media","Health & Fitness","Food & Drink","Education",
+                   "Finance","Shopping","Other"];
+const REMINDERS = ["None","1 day before","3 days before","1 week before"];
 
-  const handleSave = async () => {
-    if (!name || !amount) {
-      Alert.alert("Missing Info", "Please enter a name and amount.");
-      return;
+const SERVICE_ICONS = {
+  netflix:"🎬", spotify:"🎵", youtube:"📺", "apple tv":"📺", "apple tv+":"📺",
+  disney:"🎬", hulu:"📺", "amazon prime":"🛒", prime:"🛒", "prime video":"📺",
+  xbox:"🎮", playstation:"🎮", "ps plus":"🎮", "game pass":"🎮", nintendo:"🎮",
+  icloud:"☁️", dropbox:"☁️", "google one":"☁️", "google drive":"☁️", onedrive:"☁️",
+  chatgpt:"🤖", openai:"🤖", claude:"🤖", gemini:"🤖",
+  slack:"💼", notion:"💼", zoom:"💼", microsoft:"💼", office:"💼", figma:"🎨",
+  gym:"🏋️", peloton:"🏋️", duolingo:"📚", coursera:"📚", udemy:"📚",
+  audible:"📚", kindle:"📚", nyt:"📰", "apple news":"📰", medium:"📰",
+  uber:"🚗", lyft:"🚗", shopify:"🛒", canva:"🎨", adobe:"📷",
+};
+
+function autoIcon(name) {
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(SERVICE_ICONS)) {
+    if (lower.includes(key)) return SERVICE_ICONS[key];
+  }
+  return null;
+}
+
+// ─── Renewal calc ─────────────────────────────────────────────────────────────
+function calcRenewal(dateObj, cycle) {
+  if (!dateObj) return null;
+  const origD = dateObj.getDate();
+  const today = new Date(); today.setHours(0,0,0,0);
+  let next = new Date(dateObj); next.setHours(0,0,0,0);
+  if (next > today) return next; // future date = that IS the next billing
+  if (cycle === "Weekly") {
+    while (next <= today) next.setDate(next.getDate() + 7);
+  } else if (cycle === "Monthly") {
+    while (next <= today) {
+      let nm = next.getMonth() + 2, ny = next.getFullYear();
+      if (nm > 12) { nm = 1; ny++; }
+      const max = new Date(ny, nm, 0).getDate();
+      next = new Date(ny, nm - 1, Math.min(origD, max));
     }
+  } else if (cycle === "Yearly") {
+    while (next <= today) next = new Date(next.getFullYear()+1, dateObj.getMonth(), origD);
+  }
+  return next;
+}
 
-    const newSub = { name, amount: parseFloat(amount), cycle: "Monthly" };
-    
-    // Call Context function instead of direct storage
-    const success = await addSubscription(newSub);
+function prettyDate(d) {
+  if (!d) return "";
+  return d.toLocaleDateString("en-GB", { day:"numeric", month:"short", year:"numeric" });
+}
 
-    if (success) {
-      setName("");
-      setAmount("");
-      ref.current?.close();
-      // No need for onSaveSuccess() callback anymore, Context handles it!
+// ─── iOS-native date picker modal ─────────────────────────────────────────────
+// Uses @react-native-community/datetimepicker which shows native spinner on iOS
+function NativeDateModal({ visible, value, onConfirm, onCancel, theme }) {
+  const [temp, setTemp] = useState(value || new Date());
+
+  useEffect(() => { if (visible) setTemp(value || new Date()); }, [visible]);
+
+  if (!visible) return null;
+
+  // Dynamically require so Android doesn't crash if not installed
+  let DateTimePicker = null;
+  try { DateTimePicker = require("@react-native-community/datetimepicker").default; } catch {}
+
+  if (!DateTimePicker) {
+    // Fallback: simple text input
+    return (
+      <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
+        <View style={nd.overlay}>
+          <View style={[nd.box, { backgroundColor: theme.card }]}>
+            <Text style={[nd.title,{color:theme.text}]}>Enter date</Text>
+            <TextInput
+              style={[nd.textIn,{backgroundColor:theme.input,color:theme.text}]}
+              placeholder="DD/MM/YYYY" placeholderTextColor={theme.subtext}
+              onChangeText={v => {
+                const [d,m,y] = v.split("/");
+                if (y?.length===4) setTemp(new Date(+y,+m-1,+d));
+              }}
+            />
+            <TouchableOpacity style={nd.doneBtn} onPress={()=>onConfirm(temp)}>
+              <Text style={nd.doneTxt}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
+  if (Platform.OS === "android") {
+    // Android shows inline native picker — just render it directly
+    return (
+      <DateTimePicker
+        value={temp} mode="date" display="default"
+        onChange={(e, d) => { if (d) onConfirm(d); else onCancel(); }}
+      />
+    );
+  }
+
+  // iOS — spinner in a modal sheet
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onCancel}>
+      <TouchableOpacity style={nd.overlay} activeOpacity={1} onPress={onCancel} />
+      <View style={[nd.sheet, { backgroundColor: theme.card }]}>
+        <View style={[nd.header, { borderBottomColor: theme.border }]}>
+          <TouchableOpacity onPress={onCancel}>
+            <Text style={[nd.cancelTxt,{color:theme.subtext}]}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[nd.title,{color:theme.text}]}>First Billing Date</Text>
+          <TouchableOpacity onPress={()=>onConfirm(temp)}>
+            <Text style={nd.doneTxt}>Done</Text>
+          </TouchableOpacity>
+        </View>
+        <DateTimePicker
+          value={temp} mode="date" display="spinner"
+          textColor={theme.text}
+          onChange={(_, d) => { if (d) setTemp(d); }}
+          style={{ width:"100%" }}
+        />
+      </View>
+    </Modal>
+  );
+}
+const nd = StyleSheet.create({
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor:"rgba(0,0,0,0.4)", justifyContent:"flex-end" },
+  sheet: { borderTopLeftRadius:20, borderTopRightRadius:20, paddingBottom:34 },
+  header: { flexDirection:"row", justifyContent:"space-between", alignItems:"center",
+    padding:16, borderBottomWidth:StyleSheet.hairlineWidth },
+  title: { fontSize:16, fontWeight:"700" },
+  cancelTxt: { fontSize:16 },
+  doneTxt: { fontSize:16, fontWeight:"700", color:"#8e44ad" },
+  box: { margin:40, borderRadius:16, padding:20 },
+  textIn: { padding:12, borderRadius:10, fontSize:16, marginVertical:12 },
+  doneBtn: { backgroundColor:"#8e44ad", padding:14, borderRadius:12, alignItems:"center" },
+});
+
+// ─── Icon picker modal (works on iOS & Android) ────────────────────────────────
+function IconPickerModal({ visible, current, onSelect, onClose, theme }) {
+  const { height: SH } = Dimensions.get("window");
+  const translateY = useRef(new Animated.Value(SH)).current;
+
+  useEffect(() => {
+    Animated.spring(translateY, {
+      toValue: visible ? 0 : SH, useNativeDriver: true, damping: 22, stiffness: 220,
+    }).start();
+  }, [visible]);
+
+  const pan = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, gs) => gs.dy > 4,
+    onPanResponderMove: (_, gs) => { if (gs.dy > 0) translateY.setValue(gs.dy); },
+    onPanResponderRelease: (_, gs) => {
+      if (gs.dy > 80 || gs.vy > 0.5) {
+        Animated.timing(translateY,{toValue:SH,duration:220,useNativeDriver:true}).start(onClose);
+      } else {
+        Animated.spring(translateY,{toValue:0,useNativeDriver:true,damping:22,stiffness:220}).start();
+      }
+    },
+  })).current;
+
+  const pickFromGallery = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) { Alert.alert("Permission needed","Allow photo access to use gallery images."); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true, aspect:[1,1], quality:0.8,
+    });
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      onSelect({ type:"image", uri: result.assets[0].uri });
+      onClose();
     }
   };
 
+  if (!visible) return null;
+
   return (
-    <BottomSheet
-      ref={ref}
-      index={-1}
-      snapPoints={snapPoints}
-      enablePanDownToClose
-      backgroundStyle={styles.sheetBackground}
-      handleIndicatorStyle={styles.handle}
-    >
-      <BottomSheetView style={styles.content}>
-        <Text style={styles.title}>Add Subscription</Text>
-        <View style={styles.form}>
-          <Text style={styles.label}>Subscription Name</Text>
-          <BottomSheetTextInput
-            style={styles.input}
-            placeholder="e.g. Netflix"
-            value={name}
-            onChangeText={setName}
-          />
-          <Text style={styles.label}>Monthly Amount (₦)</Text>
-          <BottomSheetTextInput
-            style={styles.input}
-            placeholder="0.00"
-            keyboardType="numeric"
-            value={amount}
-            onChangeText={setAmount}
-          />
-          <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-            <Text style={styles.saveButtonText}>Add Subscription</Text>
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <TouchableOpacity style={ip.backdrop} activeOpacity={1} onPress={onClose} />
+      <Animated.View style={[ip.sheet, { backgroundColor: theme.card, transform:[{translateY}] }]}>
+        <View {...pan.panHandlers} style={ip.handleArea}>
+          <View style={[ip.handle,{backgroundColor:theme.border}]} />
+        </View>
+        <Text style={[ip.title,{color:theme.text}]}>Choose Icon</Text>
+
+        {/* Gallery option */}
+        <TouchableOpacity style={[ip.galleryBtn,{backgroundColor:theme.input}]} onPress={pickFromGallery}>
+          <Ionicons name="image-outline" size={22} color="#8e44ad" />
+          <Text style={[ip.galleryTxt,{color:theme.text}]}>Choose from Gallery</Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.subtext} />
+        </TouchableOpacity>
+
+        <Text style={[ip.sectionLabel,{color:theme.subtext}]}>Or pick an emoji</Text>
+
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={ip.grid}>
+          {EMOJI_ICONS.map(ic => (
+            <TouchableOpacity
+              key={ic} onPress={() => { onSelect({ type:"emoji", value:ic }); onClose(); }}
+              style={[ip.item, {backgroundColor:theme.input},
+                current?.type==="emoji"&&current.value===ic && ip.itemSelected]}
+            >
+              <Text style={ip.emoji}>{ic}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </Animated.View>
+    </Modal>
+  );
+}
+const ip = StyleSheet.create({
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor:"rgba(0,0,0,0.45)" },
+  sheet: { position:"absolute", bottom:0, left:0, right:0, borderTopLeftRadius:24,
+    borderTopRightRadius:24, paddingHorizontal:20, paddingBottom:40, maxHeight:"65%" },
+  handleArea: { alignItems:"center", paddingVertical:12 },
+  handle: { width:36, height:4, borderRadius:2 },
+  title: { fontSize:20, fontWeight:"800", marginBottom:16, textAlign:"center" },
+  galleryBtn: { flexDirection:"row", alignItems:"center", gap:12, padding:14,
+    borderRadius:14, marginBottom:16 },
+  galleryTxt: { flex:1, fontSize:16, fontWeight:"600" },
+  sectionLabel: { fontSize:12, fontWeight:"700", textTransform:"uppercase",
+    letterSpacing:0.6, marginBottom:12 },
+  grid: { flexDirection:"row", flexWrap:"wrap", gap:10, paddingBottom:10 },
+  item: { width:52, height:52, borderRadius:14, alignItems:"center",
+    justifyContent:"center", borderWidth:2, borderColor:"transparent" },
+  itemSelected: { borderColor:"#8e44ad", backgroundColor:"#fdf4ff" },
+  emoji: { fontSize:24 },
+});
+
+// ─── Row + Group helpers (clean grouped card layout) ─────────────────────────
+function RowItem({ label, right, theme, noBorder }) {
+  return (
+    <View style={[rS.row, {borderBottomColor:theme.border}, noBorder&&{borderBottomWidth:0}]}>
+      <Text style={[rS.label,{color:theme.text}]}>{label}</Text>
+      <View style={rS.right}>{right}</View>
+    </View>
+  );
+}
+const rS = StyleSheet.create({
+  row: { flexDirection:"row", justifyContent:"space-between", alignItems:"center",
+    paddingVertical:14, borderBottomWidth:StyleSheet.hairlineWidth },
+  label: { fontSize:16, fontWeight:"500" },
+  right: { flexDirection:"row", alignItems:"center", gap:6 },
+});
+
+function Group({ children, theme }) {
+  return (
+    <View style={[gS.card, {backgroundColor:theme.card, borderColor:theme.border}]}>
+      {children}
+    </View>
+  );
+}
+const gS = StyleSheet.create({
+  card: { borderRadius:16, paddingHorizontal:16, marginBottom:12,
+    borderWidth:StyleSheet.hairlineWidth },
+});
+
+// ─── PickerRow — value + Ionicons chevrons (not ⌃⌄ text) ─────────────────────
+function PickerRow({ label, value, onPress, theme, noBorder }) {
+  return (
+    <RowItem label={label} theme={theme} noBorder={noBorder} right={
+      <TouchableOpacity style={pr.btn} onPress={onPress}>
+        <Text style={[pr.value,{color:theme.subtext}]}>{value}</Text>
+        <Ionicons name="chevron-expand" size={16} color={theme.subtext} />
+      </TouchableOpacity>
+    } />
+  );
+}
+const pr = StyleSheet.create({
+  btn: { flexDirection:"row", alignItems:"center", gap:4 },
+  value: { fontSize:15 },
+});
+
+// ─── Generic bottom-sheet picker modal (iOS & Android) ───────────────────────
+function PickerModal({ visible, title, options, current, onSelect, onClose, theme }) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={pm.backdrop} activeOpacity={1} onPress={onClose} />
+      <View style={[pm.sheet, {backgroundColor:theme.card}]}>
+        <View style={[pm.header,{borderBottomColor:theme.border}]}>
+          <Text style={[pm.title,{color:theme.text}]}>{title}</Text>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={pm.done}>Done</Text>
           </TouchableOpacity>
         </View>
-      </BottomSheetView>
-    </BottomSheet>
+        <ScrollView style={pm.list}>
+          {options.map((opt,i) => (
+            <TouchableOpacity
+              key={opt}
+              style={[pm.item, i<options.length-1&&{borderBottomWidth:StyleSheet.hairlineWidth,borderBottomColor:theme.border}]}
+              onPress={() => { onSelect(opt); onClose(); }}
+            >
+              <Text style={[pm.itemText,{color:theme.text}, current===opt&&{color:"#8e44ad",fontWeight:"700"}]}>{opt}</Text>
+              {current===opt && <Ionicons name="checkmark" size={18} color="#8e44ad" />}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+const pm = StyleSheet.create({
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor:"rgba(0,0,0,0.4)" },
+  sheet: { position:"absolute", bottom:0, left:0, right:0, borderTopLeftRadius:20,
+    borderTopRightRadius:20, maxHeight:"60%", paddingBottom:34 },
+  header: { flexDirection:"row", justifyContent:"space-between", alignItems:"center",
+    padding:16, borderBottomWidth:StyleSheet.hairlineWidth },
+  title: { fontSize:17, fontWeight:"700" },
+  done: { fontSize:16, fontWeight:"700", color:"#8e44ad" },
+  list: { paddingHorizontal:16 },
+  item: { flexDirection:"row", justifyContent:"space-between", alignItems:"center",
+    paddingVertical:14 },
+  itemText: { fontSize:16 },
+});
+
+// ─── Main AddSubSheet ─────────────────────────────────────────────────────────
+const PLACEHOLDERS = [
+  "e.g. ChatGPT Pro","e.g. Netflix","e.g. Spotify Premium",
+  "e.g. iCloud 200GB","e.g. Xbox Game Pass",
+];
+
+const AddSubSheet = forwardRef((props, ref) => {
+  const { addSubscription, updateSubscription } = useSubscriptions();
+  const { theme, currency } = useApp();
+
+  const [visible, setVisible]       = useState(false);
+  const [editingId, setEditingId]   = useState(null);
+  // icon is { type:"emoji", value:"🎬" } or { type:"image", uri:"..." }
+  const [icon, setIcon]             = useState({ type:"emoji", value:"⭐" });
+  const [name, setName]             = useState("");
+  const [amount, setAmount]         = useState("");
+  const [cycle, setCycle]           = useState("Monthly");
+  const [isTrial, setIsTrial]       = useState(false);
+  const [billingDate, setBillingDate] = useState(new Date());
+  const [category, setCategory]     = useState("Entertainment");
+  const [reminder, setReminder]     = useState("None");
+  const [note, setNote]             = useState("");
+
+  const [showIconPicker, setShowIconPicker]     = useState(false);
+  const [showDatePicker, setShowDatePicker]     = useState(false);
+  const [showCyclePicker, setShowCyclePicker]   = useState(false);
+  const [showCatPicker, setShowCatPicker]       = useState(false);
+  const [showReminderPicker, setShowReminderPicker] = useState(false);
+
+  const placeholder = PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
+
+  useImperativeHandle(ref, () => ({
+    expand: () => { resetForm(); setVisible(true); },
+    openEdit: (sub) => {
+      setEditingId(sub.id);
+      setIcon(sub.icon || { type:"emoji", value:"⭐" });
+      setName(sub.name||""); setAmount(sub.amount?.toString()||"");
+      setCycle(sub.cycle||"Monthly"); setIsTrial(sub.isTrial||false);
+      setBillingDate(sub.startDate ? new Date(sub.startDate) : new Date());
+      setCategory(sub.category||"Entertainment");
+      setReminder(sub.reminder||"None"); setNote(sub.note||"");
+      setVisible(true);
+    },
+    close: () => setVisible(false),
+  }));
+
+  const resetForm = () => {
+    setEditingId(null); setIcon({type:"emoji",value:"⭐"});
+    setName(""); setAmount(""); setCycle("Monthly"); setIsTrial(false);
+    setBillingDate(new Date()); setCategory("Entertainment");
+    setReminder("None"); setNote("");
+  };
+
+  const handleNameChange = (val) => {
+    setName(val);
+    const auto = autoIcon(val);
+    if (auto) setIcon({ type:"emoji", value: auto });
+  };
+
+  const handleSave = async () => {
+    if (!name.trim() || !amount) {
+      Alert.alert("Missing Info","Please enter a name and amount."); return;
+    }
+    const renewal = calcRenewal(billingDate, cycle);
+    const sub = {
+      name: name.trim(), amount: parseFloat(amount), cycle, icon, isTrial,
+      startDate: billingDate.toISOString(),
+      billingDate: renewal ? renewal.toISOString().split("T")[0] : null,
+      category, reminder, note,
+    };
+    const success = editingId
+      ? await updateSubscription({ ...sub, id: editingId })
+      : await addSubscription(sub);
+    if (success) { resetForm(); setVisible(false); }
+  };
+
+  const renewal = calcRenewal(billingDate, cycle);
+
+  const renderIcon = () => {
+    if (icon?.type === "image") {
+      return <Image source={{ uri: icon.uri }} style={ms.iconImg} />;
+    }
+    return <Text style={ms.iconEmoji}>{icon?.value || "⭐"}</Text>;
+  };
+
+  return (
+    <>
+      <SwipeableModal visible={visible} onClose={() => setVisible(false)} snapHeight={0.88}>
+        <ScrollView
+          style={{ flex:1 }}
+          contentContainerStyle={[ms.scroll, { backgroundColor: theme.background }]}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="on-drag"
+        >
+          {/* ── GROUP 1: Icon + Name + Amount ── */}
+          <Group theme={theme}>
+            <View style={[ms.topRow, {borderBottomColor:theme.border}]}>
+              <TouchableOpacity
+                style={[ms.iconBtn,{backgroundColor:theme.input}]}
+                onPress={() => setShowIconPicker(true)}
+              >
+                {renderIcon()}
+              </TouchableOpacity>
+              <View style={ms.nameAmountCol}>
+                <TextInput
+                  style={[ms.nameInput,{color:theme.text}]}
+                  placeholder={placeholder}
+                  placeholderTextColor={theme.subtext}
+                  value={name}
+                  onChangeText={handleNameChange}
+                />
+                <View style={[ms.amountRow,{borderTopColor:theme.border}]}>
+                  <Text style={[ms.amountLabel,{color:theme.subtext}]}>Amount</Text>
+                  <View style={ms.amountRight}>
+                    <Text style={[ms.nairaSign,{color:theme.text}]}>₦</Text>
+                    <TextInput
+                      style={[ms.amountInput,{color:theme.text}]}
+                      placeholder="0.00"
+                      placeholderTextColor={theme.subtext}
+                      keyboardType="numeric"
+                      value={amount}
+                      onChangeText={setAmount}
+                      textAlign="right"
+                    />
+                  </View>
+                </View>
+              </View>
+            </View>
+          </Group>
+
+          {/* ── GROUP 2: Billing ── */}
+          <Group theme={theme}>
+            {/* First billed date */}
+            <RowItem theme={theme} label="First billed" right={
+              <TouchableOpacity
+                style={[ms.dateChip,{backgroundColor:theme.input}]}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Text style={[ms.dateChipText,{color:theme.text}]}>{prettyDate(billingDate)}</Text>
+              </TouchableOpacity>
+            } />
+
+            {/* Renewal preview */}
+            {renewal && (
+              <View style={ms.renewalRow}>
+                <Ionicons name="refresh-circle" size={13} color="#16a34a" />
+                <Text style={ms.renewalText}>Renews {prettyDate(renewal)}</Text>
+              </View>
+            )}
+
+            <PickerRow theme={theme} label="Billing cycle" value={cycle}
+              onPress={() => setShowCyclePicker(true)} />
+
+            <RowItem theme={theme} label="Free trial" noBorder right={
+              <Switch value={isTrial} onValueChange={setIsTrial}
+                trackColor={{false:"#e2e8f0",true:"#d8b4fe"}}
+                thumbColor={isTrial?"#8e44ad":"#f4f4f5"} />
+            } />
+          </Group>
+
+          {/* ── GROUP 3: Details ── */}
+          <Group theme={theme}>
+            <PickerRow theme={theme} label="Category" value={category}
+              onPress={() => setShowCatPicker(true)} />
+            <PickerRow theme={theme} label="Reminder" value={reminder}
+              onPress={() => setShowReminderPicker(true)} noBorder />
+          </Group>
+
+          {/* ── GROUP 4: Note ── */}
+          <Group theme={theme}>
+            <View style={{paddingVertical:8}}>
+              <TextInput
+                style={[ms.noteInput,{color:theme.text}]}
+                placeholder="Note (optional) — e.g. Family plan, shared with 3 people"
+                placeholderTextColor={theme.subtext}
+                value={note} onChangeText={setNote}
+                multiline numberOfLines={3} textAlignVertical="top"
+              />
+            </View>
+          </Group>
+
+          {/* ── Save button ── */}
+          <TouchableOpacity style={ms.saveBtn} onPress={handleSave}>
+            <Text style={ms.saveBtnText}>
+              {editingId ? "Save Changes" : "Add Subscription"}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SwipeableModal>
+
+      {/* All pickers rendered outside SwipeableModal so they sit on top */}
+      <IconPickerModal
+        visible={showIconPicker} current={icon}
+        onSelect={setIcon} onClose={() => setShowIconPicker(false)} theme={theme} />
+
+      <NativeDateModal
+        visible={showDatePicker} value={billingDate}
+        onConfirm={(d) => { setBillingDate(d); setShowDatePicker(false); }}
+        onCancel={() => setShowDatePicker(false)} theme={theme} />
+
+      <PickerModal visible={showCyclePicker} title="Billing Cycle"
+        options={CYCLES} current={cycle}
+        onSelect={setCycle} onClose={() => setShowCyclePicker(false)} theme={theme} />
+
+      <PickerModal visible={showCatPicker} title="Category"
+        options={CATEGORIES} current={category}
+        onSelect={setCategory} onClose={() => setShowCatPicker(false)} theme={theme} />
+
+      <PickerModal visible={showReminderPicker} title="Reminder"
+        options={REMINDERS} current={reminder}
+        onSelect={setReminder} onClose={() => setShowReminderPicker(false)} theme={theme} />
+    </>
   );
 });
 
 export default AddSubSheet;
 
-// ... keep your existing styles ...
-const styles = StyleSheet.create({
-  sheetBackground: { backgroundColor: "#ffffff" },
-  handle: { backgroundColor: "#e5e7eb", width: 40 },
-  content: { padding: 24 },
-  title: { fontSize: 22, fontWeight: "800", color: "#111111", marginBottom: 20 },
-  form: { marginTop: 10 },
-  label: { fontSize: 14, fontWeight: "600", color: "#64748b", marginBottom: 8 },
-  input: { backgroundColor: "#f1f5f9", padding: 15, borderRadius: 12, fontSize: 16, marginBottom: 20 },
-  saveButton: { backgroundColor: "#8e44ad", padding: 16, borderRadius: 12, alignItems: "center", marginTop: 10 },
-  saveButtonText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
+const ms = StyleSheet.create({
+  scroll: { paddingHorizontal:16, paddingBottom:48, paddingTop:8 },
+
+  topRow: { flexDirection:"row", alignItems:"center", paddingVertical:14,
+    gap:14, borderBottomWidth:0 },
+  iconBtn: { width:58, height:58, borderRadius:16, alignItems:"center",
+    justifyContent:"center", overflow:"hidden" },
+  iconImg: { width:58, height:58, borderRadius:16 },
+  iconEmoji: { fontSize:28 },
+
+  nameAmountCol: { flex:1 },
+  nameInput: { fontSize:16, fontWeight:"500", paddingBottom:10 },
+  amountRow: { flexDirection:"row", justifyContent:"space-between",
+    alignItems:"center", paddingTop:10, borderTopWidth:StyleSheet.hairlineWidth },
+  amountLabel: { fontSize:15 },
+  amountRight: { flexDirection:"row", alignItems:"center", gap:2 },
+  nairaSign: { fontSize:15, fontWeight:"700" },
+  amountInput: { fontSize:15, fontWeight:"600", minWidth:80 },
+
+  renewalRow: { flexDirection:"row", alignItems:"center", gap:5,
+    paddingBottom:10, paddingTop:2 },
+  renewalText: { fontSize:12, color:"#16a34a", fontWeight:"600" },
+
+  dateChip: { paddingHorizontal:12, paddingVertical:7, borderRadius:10 },
+  dateChipText: { fontSize:15, fontWeight:"600" },
+
+  noteInput: { fontSize:15, minHeight:60, paddingTop:4 },
+
+  saveBtn: { backgroundColor:"#8e44ad", padding:16, borderRadius:16,
+    alignItems:"center", marginTop:4, marginBottom:8 },
+  saveBtnText: { color:"#fff", fontSize:16, fontWeight:"700" },
 });

@@ -44,37 +44,18 @@ export const SubscriptionProvider = ({ children }) => {
     return false;
   };
 
-  // Toggle cancelled state. cancelled=true means user stopped paying.
-  const cancelSubscription = async (id, cancel = true) => {
-    const updated = await subscriptionStorage.update({ id, cancelled: cancel });
-    if (updated) { setSubscriptions(updated); return true; }
-    return false;
-  };
-
   const updateProfile = async (newProfile) => {
     setProfile(newProfile);
     await userStorage.saveProfile(newProfile);
   };
 
-  // Monthly equivalent of active subs only
-  const totalSpend = subscriptions
-    .filter((s) => !s.cancelled)
-    .reduce((sum, sub) => {
-      const amt = sub.amount || 0;
-      if (sub.cycle === "Weekly")  return sum + (amt * 52) / 12;
-      if (sub.cycle === "Yearly")  return sum + amt / 12;
-      return sum + amt;
-    }, 0);
-
-  // Monthly equivalent of cancelled subs = money saved
-  const savedTotal = subscriptions
-    .filter((s) => s.cancelled)
-    .reduce((sum, sub) => {
-      const amt = sub.amount || 0;
-      if (sub.cycle === "Weekly")  return sum + (amt * 52) / 12;
-      if (sub.cycle === "Yearly")  return sum + amt / 12;
-      return sum + amt;
-    }, 0);
+  // Monthly equivalent total across all billing cycles
+  const totalSpend = subscriptions.reduce((sum, sub) => {
+    const amt = sub.amount || 0;
+    if (sub.cycle === "Weekly")  return sum + amt * 52 / 12;
+    if (sub.cycle === "Yearly")  return sum + amt / 12;
+    return sum + amt; // Monthly default
+  }, 0);
 
   return (
     <SubscriptionContext.Provider
@@ -83,9 +64,7 @@ export const SubscriptionProvider = ({ children }) => {
         addSubscription,
         updateSubscription,
         deleteSubscription,
-        cancelSubscription,
         totalSpend,
-        savedTotal,
         loading,
         profile,
         updateProfile,

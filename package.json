@@ -1,5 +1,5 @@
 {
-  "name": "revolvii",
+  "name": "revolv",
   "version": "1.0.0",
   "main": "expo-router/entry",
   "scripts": {
@@ -11,13 +11,18 @@
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.8",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/datetimepicker": "8.4.4",
+    "babel-preset-expo": "^55.0.10",
     "expo": "~54.0.32",
     "expo-blur": "~15.0.8",
     "expo-constants": "~18.0.13",
+    "expo-image-picker": "~17.0.10",
+    "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.11",
     "expo-notifications": "~0.32.16",
     "expo-router": "~6.0.22",
     "expo-status-bar": "~3.0.9",
+    "lottie-react-native": "~7.3.1",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
