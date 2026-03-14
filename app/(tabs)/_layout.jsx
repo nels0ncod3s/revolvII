@@ -13,36 +13,27 @@ export default function TabsLayout() {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: "#7c5cff",
-        tabBarInactiveTintColor: darkMode ? "#555570" : "#b0b0c0",
-        tabBarShowLabel: false,
+        tabBarInactiveTintColor: theme.subText,
+        tabBarShowLabel: false,          // icon-only tab bar like the screenshot
         tabBarStyle: {
           position: "absolute",
           borderTopWidth: 0,
           elevation: 0,
           backgroundColor: Platform.OS === "ios" ? "transparent" : theme.tabBar,
-          height: 80,
+          height: 82,
         },
         tabBarBackground: () =>
           Platform.OS === "ios" ? (
             <BlurView intensity={80} tint={darkMode ? "dark" : "light"} style={StyleSheet.absoluteFill} />
           ) : null,
-        // Key fix: use tabBarItemStyle to prevent icon distortion
-        tabBarItemStyle: {
-          alignItems: "center",
-          justifyContent: "center",
-        },
       }}
     >
       <Tabs.Screen
-        name="home7"
+        name="home"
         options={{
           tabBarIcon: ({ color, focused }) => (
-            <View style={[tab.wrap, focused && tab.active]}>
-              <Ionicons
-                name={focused ? "house" : "house"}
-                size={22}
-                color={color}
-              />
+            <View style={focused ? tab.activeWrap : null}>
+              <Ionicons name={focused ? "home" : "home-outline"} size={24} color={color} />
             </View>
           ),
         }}
@@ -52,12 +43,8 @@ export default function TabsLayout() {
         name="calendar"
         options={{
           tabBarIcon: ({ color, focused }) => (
-            <View style={[tab.wrap, focused && tab.active]}>
-              <Ionicons
-                name={focused ? "calendar-clear" : "calendar-clear-outline"}
-                size={22}
-                color={color}
-              />
+            <View style={focused ? tab.activeWrap : null}>
+              <Ionicons name={focused ? "calendar" : "calendar-outline"} size={24} color={color} />
             </View>
           ),
         }}
@@ -67,12 +54,8 @@ export default function TabsLayout() {
         name="settings"
         options={{
           tabBarIcon: ({ color, focused }) => (
-            <View style={[tab.wrap, focused && tab.active]}>
-              <Ionicons
-                name={focused ? "person-circle" : "person-circle-outline"}
-                size={24}
-                color={color}
-              />
+            <View style={focused ? tab.activeWrap : null}>
+              <Ionicons name={focused ? "settings" : "settings-outline"} size={24} color={color} />
             </View>
           ),
         }}
@@ -82,13 +65,8 @@ export default function TabsLayout() {
 }
 
 const tab = StyleSheet.create({
-  wrap: {
-    // Fixed size so highlight never distorts
-    width: 46, height: 36,
-    alignItems: "center", justifyContent: "center",
-    borderRadius: 12,
-  },
-  active: {
-    backgroundColor: "rgba(124,92,255,0.12)",
+  activeWrap: {
+    backgroundColor: "rgba(124,92,255,0.1)",
+    borderRadius: 14, padding: 8,
   },
 });

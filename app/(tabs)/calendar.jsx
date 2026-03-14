@@ -1,22 +1,24 @@
 // app/(tabs)/calendar.jsx
-import React, { useState, useMemo, useRef, useCallback } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, SafeAreaView,
   StatusBar, Platform, ScrollView, Animated, Dimensions,
-  Modal, PanResponder,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSubscriptions } from "../../Context/subscriptionContext";
-import { useApp }            from "../../Context/appContext";
+import { useApp } from "../../Context/appContext";
+
+// ─── Font constant — SF Pro Rounded on real device, System elsewhere ──────────
+const FONT = Platform.OS === "ios" ? "SF Pro Rounded" : "sans-serif-rounded";
 
 const ACCENT  = "#7c5cff";
 const { width: SW } = Dimensions.get("window");
-const DAY_W   = Math.floor((SW - 40) / 7);
+const DAY_W   = Math.floor((SW - 40) / 7); // 7 columns, 20px side padding each
 
-const DAYS   = ["M","T","W","T","F","S","S"];
-const MONTHS = ["January","February","March","April","May","June",
-                "July","August","September","October","November","December"];
+const DAYS    = ["M","T","W","T","F","S","S"];
+const MONTHS  = ["January","February","March","April","May","June",
+                 "July","August","September","October","November","December"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function safeEmoji(raw) {
@@ -26,54 +28,46 @@ function safeEmoji(raw) {
   return "⭐";
 }
 
-// Only show a subscription on dates ON or AFTER its startDate
-function isOnOrAfterStart(dateObj, startDateStr) {
-  if (!startDateStr) return true; // no start date saved → always show
-  const start = new Date(startDateStr + "T00:00:00");
-  if (isNaN(start)) return true;
-  start.setHours(0,0,0,0);
-  const d = new Date(dateObj); d.setHours(0,0,0,0);
-  return d >= start;
-}
-
-// Return all billing dates for a sub in a given year/month, filtered by startDate
+// Given a subscription, return all billing dates (as YYYY-MM-DD strings)
+// that fall within a given month
 function getBillingDatesInMonth(sub, year, month) {
   if (sub.cancelled || !sub.billingDate) return [];
   const base = new Date(sub.billingDate + "T00:00:00");
   if (isNaN(base)) return [];
 
+  const dates = [];
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const candidates = [];
 
   if (sub.cycle === "Monthly") {
-    const d = Math.min(base.getDate(), daysInMonth);
-    candidates.push(new Date(year, month, d));
+    const d = base.getDate();
+    const clamped = Math.min(d, daysInMonth);
+    dates.push(new Date(year, month, clamped));
   } else if (sub.cycle === "Yearly") {
     if (base.getMonth() === month) {
-      const d = Math.min(base.getDate(), daysInMonth);
-      candidates.push(new Date(year, month, d));
+      const d = base.getDate();
+      const clamped = Math.min(d, daysInMonth);
+      dates.push(new Date(year, month, clamped));
     }
   } else if (sub.cycle === "Weekly") {
-    const targetDay = base.getDay();
+    // Find first occurrence in month on the same weekday
+    const targetDay = base.getDay(); // 0=Sun
     let d = new Date(year, month, 1);
     while (d.getDay() !== targetDay) d.setDate(d.getDate() + 1);
     while (d.getMonth() === month) {
-      candidates.push(new Date(d));
+      dates.push(new Date(d));
       d.setDate(d.getDate() + 7);
     }
   }
 
-  return candidates
-    .filter((c) => isOnOrAfterStart(c, sub.startDate))
-    .map((c) =>
-      `${c.getFullYear()}-${String(c.getMonth()+1).padStart(2,"0")}-${String(c.getDate()).padStart(2,"0")}`
-    );
+  return dates.map((d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
 }
 
+// Build a map: "YYYY-MM-DD" → [subscription, ...]
 function buildPaymentMap(subscriptions, year, month) {
   const map = {};
   for (const sub of subscriptions) {
-    for (const d of getBillingDatesInMonth(sub, year, month)) {
+    const dates = getBillingDatesInMonth(sub, year, month);
+    for (const d of dates) {
       if (!map[d]) map[d] = [];
       map[d].push(sub);
     }
@@ -81,243 +75,274 @@ function buildPaymentMap(subscriptions, year, month) {
   return map;
 }
 
-// Mon-first grid: returns array of Date|null
+// Days in grid: starts Monday. Returns array of {date: Date|null, key: string}
 function buildCalendarGrid(year, month) {
-  const firstDay = new Date(year, month, 1).getDay();
-  const offset   = firstDay === 0 ? 6 : firstDay - 1;
-  const total    = new Date(year, month + 1, 0).getDate();
-  const cells    = [];
+  const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+  // Convert to Mon-start: Sun=6, Mon=0, ...
+  const offset = firstDay === 0 ? 6 : firstDay - 1;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const cells = [];
   for (let i = 0; i < offset; i++) cells.push(null);
-  for (let d = 1; d <= total; d++) cells.push(new Date(year, month, d));
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+  // Pad to complete last row
   while (cells.length % 7 !== 0) cells.push(null);
   return cells;
 }
 
-function toKey(date) {
-  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+// ─── Subscription icon stack (max 2 visible + "+N") ──────────────────────────
+function SubIconStack({ subs, isToday, isSelected }) {
+  if (!subs || subs.length === 0) return null;
+  const visible = subs.slice(0, 2);
+  const extra   = subs.length - 2;
+
+  return (
+    <View style={stack.wrap}>
+      {visible.map((sub, i) => (
+        <View key={sub.id} style={[stack.bubble, { zIndex: visible.length - i, marginLeft: i === 0 ? 0 : -6 }]}>
+          <Text style={stack.emoji}>{safeEmoji(sub.icon)}</Text>
+        </View>
+      ))}
+      {extra > 0 && (
+        <View style={[stack.badge, { marginLeft: -4 }]}>
+          <Text style={stack.badgeTxt}>+{extra}</Text>
+        </View>
+      )}
+    </View>
+  );
 }
+const stack = StyleSheet.create({
+  wrap:     { flexDirection: "row", alignItems: "center", marginTop: 3 },
+  bubble:   { width: 18, height: 18, borderRadius: 5, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(0,0,0,0.06)" },
+  emoji:    { fontSize: 10 },
+  badge:    { width: 18, height: 18, borderRadius: 5, backgroundColor: ACCENT, alignItems: "center", justifyContent: "center" },
+  badgeTxt: { fontSize: 8, fontWeight: "800", color: "#fff" },
+});
 
-// ─── Day-tap popup ────────────────────────────────────────────────────────────
-function DayPopup({ visible, dateStr, subs, onClose, currency, formatPrice, theme }) {
-  const scaleAnim = useRef(new Animated.Value(0.85)).current;
-  const opacAnim  = useRef(new Animated.Value(0)).current;
+// ─── Day cell ─────────────────────────────────────────────────────────────────
+function DayCell({ date, subs, isToday, isSelected, onPress }) {
+  const hasSubs = subs && subs.length > 0;
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.75}
+      style={[cell.wrap, { width: DAY_W, height: DAY_W + 16 }]}
+    >
+      <View style={[
+        cell.inner,
+        isSelected && cell.selected,
+        isToday && !isSelected && cell.today,
+        hasSubs && !isSelected && !isToday && cell.hasSubs,
+      ]}>
+        <Text style={[
+          cell.num,
+          isSelected && cell.numSelected,
+          isToday && !isSelected && cell.numToday,
+          !isToday && !isSelected && { color: "#1e293b" },
+        ]}>
+          {date.getDate()}
+        </Text>
+        {hasSubs && <SubIconStack subs={subs} isToday={isToday} isSelected={isSelected} />}
+      </View>
+    </TouchableOpacity>
+  );
+}
+const cell = StyleSheet.create({
+  wrap:        { alignItems: "center", paddingVertical: 3 },
+  inner: {
+    width: DAY_W - 6, minHeight: DAY_W - 6,
+    borderRadius: 14, alignItems: "center", justifyContent: "center",
+    paddingVertical: 5, paddingHorizontal: 2,
+  },
+  selected:    { backgroundColor: ACCENT },
+  today:       { backgroundColor: "#1e293b" },
+  hasSubs:     { backgroundColor: "rgba(124,92,255,0.07)", borderWidth: 1, borderColor: "rgba(124,92,255,0.15)" },
+  num:         { fontSize: 14, fontWeight: "600" },
+  numSelected: { color: "#fff", fontWeight: "800" },
+  numToday:    { color: "#fff", fontWeight: "800" },
+});
 
+// ─── Payment list for selected day ───────────────────────────────────────────
+function DayDetailCard({ dateStr, subs, currency, formatPrice }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   React.useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.spring(scaleAnim, { toValue: 1, damping: 18, stiffness: 260, useNativeDriver: true }),
-        Animated.timing(opacAnim,  { toValue: 1, duration: 160, useNativeDriver: true }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(scaleAnim, { toValue: 0.85, duration: 160, useNativeDriver: true }),
-        Animated.timing(opacAnim,  { toValue: 0,    duration: 160, useNativeDriver: true }),
-      ]).start();
-    }
-  }, [visible]);
+    Animated.spring(fadeAnim, { toValue: 1, damping: 18, stiffness: 200, useNativeDriver: true }).start();
+  }, [dateStr]);
 
-  if (!dateStr) return null;
+  if (!subs || subs.length === 0) return null;
 
-  const d     = new Date(dateStr + "T00:00:00");
+  const d = new Date(dateStr + "T00:00:00");
   const label = d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
   const total = subs.reduce((s, sub) => s + (sub.amount || 0), 0);
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-      <Animated.View style={[popup.backdrop, { opacity: opacAnim }]}>
-        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-      </Animated.View>
-      <View style={popup.centreWrap} pointerEvents="box-none">
-        <Animated.View style={[popup.card, { backgroundColor: theme.card, transform: [{ scale: scaleAnim }], opacity: opacAnim }]}>
-          {/* Header */}
-          <View style={popup.header}>
-            <View>
-              <Text style={[popup.dateLabel, { color: theme.text }]}>{label}</Text>
-              <Text style={[popup.totalLabel, { color: ACCENT }]}>{currency?.symbol}{formatPrice(total)} due</Text>
-            </View>
-            <TouchableOpacity onPress={onClose} style={popup.closeBtn}>
-              <Ionicons name="close" size={18} color={theme.subText} />
-            </TouchableOpacity>
-          </View>
-          {/* Sub rows */}
-          {subs.map((sub, i) => (
-            <View key={sub.id} style={[popup.row, i < subs.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border }]}>
-              <View style={[popup.iconWrap, { backgroundColor: theme.iconBg }]}>
-                <Text style={{ fontSize: 20 }}>{safeEmoji(sub.icon)}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[popup.subName, { color: theme.text }]}>{sub.name}</Text>
-                <Text style={[popup.subCycle, { color: theme.subText }]}>{sub.cycle}</Text>
-              </View>
-              <Text style={[popup.subPrice, { color: theme.text }]}>{currency?.symbol}{formatPrice(sub.amount)}</Text>
-            </View>
-          ))}
-        </Animated.View>
+    <Animated.View style={[detail.card, { opacity: fadeAnim, transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0,1], outputRange: [12, 0] }) }] }]}>
+      <View style={detail.cardHeader}>
+        <Text style={detail.dateLabel}>{label}</Text>
+        <Text style={detail.totalLabel}>{currency?.symbol}{formatPrice(total)}</Text>
       </View>
-    </Modal>
+      {subs.map((sub, i) => (
+        <View key={sub.id} style={[detail.row, i < subs.length - 1 && detail.rowBorder]}>
+          <View style={detail.iconWrap}>
+            <Text style={detail.iconEmoji}>{safeEmoji(sub.icon)}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={detail.subName}>{sub.name}</Text>
+            <Text style={detail.subCycle}>{sub.cycle}</Text>
+          </View>
+          <Text style={detail.subPrice}>{currency?.symbol}{formatPrice(sub.amount)}</Text>
+        </View>
+      ))}
+    </Animated.View>
   );
 }
-
-const popup = StyleSheet.create({
-  backdrop:   { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)" },
-  centreWrap: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 24 },
+const detail = StyleSheet.create({
   card: {
-    width: "100%", borderRadius: 24, overflow: "hidden",
-    shadowColor: "#000", shadowOpacity: 0.15, shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 }, elevation: 12,
+    backgroundColor: "#fff", borderRadius: 22, marginTop: 16,
+    borderWidth: 1, borderColor: "rgba(0,0,0,0.06)",
+    shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 }, elevation: 3, overflow: "hidden",
   },
-  header: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start",
-    padding: 18, paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.07)",
+  cardHeader: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingHorizontal: 18, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: "rgba(0,0,0,0.06)",
+    backgroundColor: "#f8f7ff",
   },
-  dateLabel:  { fontSize: 16, fontWeight: "800" },
-  totalLabel: { fontSize: 13, fontWeight: "700", marginTop: 2 },
-  closeBtn:   { width: 30, height: 30, borderRadius: 15, backgroundColor: "rgba(0,0,0,0.06)", alignItems: "center", justifyContent: "center" },
+  dateLabel:  { fontSize: 14, fontWeight: "700", color: "#1e293b" },
+  totalLabel: { fontSize: 14, fontWeight: "800", color: ACCENT },
   row:        { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: 14, gap: 12 },
-  iconWrap:   { width: 44, height: 44, borderRadius: 14, alignItems: "center", justifyContent: "center" },
-  subName:    { fontSize: 15, fontWeight: "700" },
-  subCycle:   { fontSize: 12, marginTop: 1 },
-  subPrice:   { fontSize: 15, fontWeight: "800" },
+  rowBorder:  { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "rgba(0,0,0,0.07)" },
+  iconWrap:   { width: 42, height: 42, borderRadius: 13, backgroundColor: "#f4f3ff", alignItems: "center", justifyContent: "center" },
+  iconEmoji:  { fontSize: 22 },
+  subName:    { fontSize: 15, fontWeight: "700", color: "#1e293b" },
+  subCycle:   { fontSize: 12, color: "#94a3b8", marginTop: 1 },
+  subPrice:   { fontSize: 15, fontWeight: "800", color: "#1e293b" },
 });
 
-// ─── Calendar main screen ─────────────────────────────────────────────────────
+// ─── Main calendar screen ─────────────────────────────────────────────────────
 export default function CalendarScreen() {
-  const { subscriptions } = useSubscriptions();
-  const { currency, theme, darkMode } = useApp();
+  const { subscriptions, totalSpend } = useSubscriptions();
+  const { currency } = useApp();
 
-  const now = new Date();
-  const [year,  setYear]  = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth());
-  const [popupDay, setPopupDay] = useState(null);
+  const now   = new Date();
+  const [year, setYear]     = useState(now.getFullYear());
+  const [month, setMonth]   = useState(now.getMonth());
+  const [selectedDay, setSelectedDay] = useState(
+    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`
+  );
 
-  const todayStr   = toKey(now);
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+
   const activeSubs = useMemo(() => subscriptions.filter((s) => !s.cancelled), [subscriptions]);
 
   const paymentMap = useMemo(() => buildPaymentMap(activeSubs, year, month), [activeSubs, year, month]);
   const grid       = useMemo(() => buildCalendarGrid(year, month), [year, month]);
 
-  const formatPrice = useCallback((amount) => {
+  const formatPrice = (amount) => {
     const val = (amount || 0) * (currency?.rate ?? 1);
     return val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-  }, [currency]);
+  };
 
-  // Subs that appear at least once this month
-  const monthSubs = useMemo(() => {
-    const seen = new Set(); const list = [];
-    Object.values(paymentMap).flat().forEach((s) => { if (!seen.has(s.id)) { seen.add(s.id); list.push(s); } });
-    return list;
+  // Monthly spend for current viewed month
+  const monthlyTotal = useMemo(() => {
+    return Object.values(paymentMap).flat().reduce((s, sub) => s + (sub.amount || 0), 0);
   }, [paymentMap]);
 
-  const eomTotal = useMemo(
-    () => Object.values(paymentMap).flat().reduce((s, sub) => s + (sub.amount||0), 0),
-    [paymentMap]
-  );
+  // Count unique paid subs this month (any with a billing date in month)
+  const paidSubs = useMemo(() => {
+    const seen = new Set();
+    Object.values(paymentMap).flat().forEach((s) => seen.add(s.id));
+    return seen.size;
+  }, [paymentMap]);
 
-  // Month slide animation
-  const slideAnim = useRef(new Animated.Value(0)).current;
+  // End-of-month: sum of all payments this month
+  const eomTotal = monthlyTotal;
 
-  const changeMonth = useCallback((dir) => {
-    // dir: +1 = next, -1 = prev
-    Animated.sequence([
-      Animated.timing(slideAnim, { toValue: -dir * 30, duration: 120, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: dir * 30,  duration: 0,   useNativeDriver: true }),
-      Animated.spring(slideAnim, { toValue: 0, damping: 18, stiffness: 200, useNativeDriver: true }),
-    ]).start();
+  const prevMonth = () => {
+    if (month === 0) { setYear(y => y - 1); setMonth(11); }
+    else setMonth(m => m - 1);
+    setSelectedDay(null);
+  };
+  const nextMonth = () => {
+    if (month === 11) { setYear(y => y + 1); setMonth(0); }
+    else setMonth(m => m + 1);
+    setSelectedDay(null);
+  };
 
-    setYear(y => {
-      setMonth(m => {
-        const nm = m + dir;
-        if (nm > 11) { setTimeout(() => setYear(y + 1), 0); return 0; }
-        if (nm < 0)  { setTimeout(() => setYear(y - 1), 0); return 11; }
-        return nm;
-      });
-      return y;
-    });
-    setPopupDay(null);
-  }, []);
+  const selectedSubs = selectedDay ? (paymentMap[selectedDay] || []) : [];
 
-  // Swipe gesture on the calendar
-  const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 12 && Math.abs(gs.dy) < 40,
-    onPanResponderRelease: (_, gs) => {
-      if (gs.dx < -40) changeMonth(+1);
-      else if (gs.dx > 40) changeMonth(-1);
-    },
-  })).current;
-
-  const bgColors = darkMode
-    ? ["#0f0f14", "#141420", "#0f0f14"]
-    : ["#f7f6f3", "#f3f2ef", "#f7f6f3"];
-
-  const popupSubs = popupDay ? (paymentMap[popupDay] || []) : [];
+  // Stacked emoji summary of active subs
+  const subIcons = activeSubs.slice(0, 4).map(s => safeEmoji(s.icon));
 
   return (
     <>
-      <StatusBar barStyle={darkMode ? "light-content" : "dark-content"} translucent backgroundColor="transparent" />
-
-      <DayPopup
-        visible={!!popupDay && popupSubs.length > 0}
-        dateStr={popupDay}
-        subs={popupSubs}
-        onClose={() => setPopupDay(null)}
-        currency={currency}
-        formatPrice={formatPrice}
-        theme={theme}
-      />
-
-      <LinearGradient colors={bgColors} style={{ flex: 1 }}>
+      <StatusBar barStyle="dark-content" translucent backgroundColor="transparent" />
+      <LinearGradient colors={["#f7f6f3", "#f3f2ef", "#f7f6f3"]} style={{ flex: 1 }}>
         <SafeAreaView style={{ flex: 1, paddingTop: Platform.OS === "android" ? StatusBar.currentHeight : 0 }}>
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
-            {/* ── Title ── */}
-            <Text style={[styles.screenTitle, { color: theme.text }]}>Calendar</Text>
+            {/* ── Header ── */}
+            <View style={styles.header}>
+              <Text style={styles.screenTitle}>Calendar</Text>
+            </View>
 
-            {/* ── Summary card (centred) ── */}
-            <View style={[styles.summaryCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              <Text style={[styles.summaryMonthLbl, { color: theme.subText }]}>
-                {MONTHS[month]} {year}
+            {/* ── Summary card ── */}
+            <View style={styles.summaryCard}>
+              <Text style={styles.summaryMonthLabel}>
+                Spending in {MONTHS[month]}
+              </Text>
+              <Text style={styles.summaryAmount}>
+                {currency?.symbol}{formatPrice(monthlyTotal)}
               </Text>
 
-              {/* Icon stack inline */}
-              <View style={styles.iconRow}>
-                {monthSubs.slice(0,5).map((sub, i) => (
-                  <View key={sub.id} style={[styles.inlineIcon, { marginLeft: i === 0 ? 0 : -8, zIndex: 10 - i, backgroundColor: theme.card, borderColor: theme.border }]}>
-                    <Text style={{ fontSize: 14 }}>{safeEmoji(sub.icon)}</Text>
+              {/* "You have N [icons] subscriptions and paid N/N ($X)" */}
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryText}>You have </Text>
+                <Text style={[styles.summaryText, styles.summaryBold]}>{activeSubs.length}</Text>
+                {/* Icon stack inline */}
+                {subIcons.map((em, i) => (
+                  <View key={i} style={[styles.inlineIcon, { zIndex: 10 - i, marginLeft: i === 0 ? 4 : -6 }]}>
+                    <Text style={{ fontSize: 11 }}>{em}</Text>
                   </View>
                 ))}
-                {monthSubs.length > 5 && (
-                  <View style={[styles.inlineIcon, { marginLeft: -8, backgroundColor: ACCENT, borderColor: ACCENT }]}>
-                    <Text style={{ fontSize: 9, color: "#fff", fontWeight: "800" }}>+{monthSubs.length - 5}</Text>
+                {activeSubs.length > 4 && (
+                  <View style={[styles.inlineIcon, { backgroundColor: ACCENT, marginLeft: -6 }]}>
+                    <Text style={{ fontSize: 8, color: "#fff", fontWeight: "800" }}>+{activeSubs.length - 4}</Text>
                   </View>
                 )}
+                <Text style={styles.summaryText}> subscriptions</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryText}>and paid </Text>
+                <Text style={[styles.summaryText, styles.summaryBold]}>
+                  {paidSubs}/{activeSubs.length} ({currency?.symbol}{formatPrice(monthlyTotal)})
+                </Text>
+                <Text style={styles.summaryText}>.</Text>
               </View>
 
-              <Text style={[styles.summaryLine, { color: theme.subText }]}>
-                You have{" "}
-                <Text style={[styles.summaryBold, { color: theme.text }]}>{activeSubs.length}</Text>
-                {" "}active subscription{activeSubs.length !== 1 ? "s" : ""}
-              </Text>
-
               {/* End of month */}
-              <View style={[styles.eomRow, { borderTopColor: theme.border }]}>
-                <Text style={[styles.eomLabel, { color: theme.subText }]}>End of month</Text>
-                <Text style={styles.eomValue}>-{currency?.symbol}{formatPrice(eomTotal)}</Text>
+              <View style={[styles.summaryRow, { marginTop: 8 }]}>
+                <Text style={[styles.summaryText, { color: "#94a3b8" }]}>End of the month: </Text>
+                <Text style={[styles.summaryText, styles.summaryBold, { color: "#ef4444" }]}>
+                  -{currency?.symbol}{formatPrice(eomTotal)}
+                </Text>
               </View>
             </View>
 
-            {/* ── Calendar card with swipe ── */}
-            <View style={[styles.calCard, { backgroundColor: theme.card, borderColor: theme.border }]} {...panResponder.panHandlers}>
-              {/* Month navigation */}
+            {/* ── Divider ── */}
+            <View style={styles.dottedDivider} />
+
+            {/* ── Calendar ── */}
+            <View style={styles.calWrap}>
+              {/* Month nav */}
               <View style={styles.monthNav}>
-                <TouchableOpacity onPress={() => changeMonth(-1)} style={[styles.navBtn, { backgroundColor: theme.iconBg }]} hitSlop={{top:10,bottom:10,left:10,right:10}}>
-                  <Ionicons name="chevron-back" size={18} color={theme.text} />
+                <TouchableOpacity onPress={prevMonth} style={styles.navBtn} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+                  <Ionicons name="chevron-back" size={20} color="#1e293b" />
                 </TouchableOpacity>
-                <Animated.Text style={[styles.monthTitle, { color: theme.text, transform: [{ translateX: slideAnim }] }]}>
-                  {MONTHS[month]} {year}
-                </Animated.Text>
-                <TouchableOpacity onPress={() => changeMonth(+1)} style={[styles.navBtn, { backgroundColor: theme.iconBg }]} hitSlop={{top:10,bottom:10,left:10,right:10}}>
-                  <Ionicons name="chevron-forward" size={18} color={theme.text} />
+                <Text style={styles.monthTitle}>{MONTHS[month]} {year}</Text>
+                <TouchableOpacity onPress={nextMonth} style={styles.navBtn} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+                  <Ionicons name="chevron-forward" size={20} color="#1e293b" />
                 </TouchableOpacity>
               </View>
 
@@ -325,65 +350,45 @@ export default function CalendarScreen() {
               <View style={styles.dayHeaders}>
                 {DAYS.map((d, i) => (
                   <View key={i} style={{ width: DAY_W, alignItems: "center" }}>
-                    <Text style={[styles.dayHeader, { color: theme.subText }]}>{d}</Text>
+                    <Text style={styles.dayHeader}>{d}</Text>
                   </View>
                 ))}
               </View>
 
               {/* Grid */}
-              <Animated.View style={[styles.grid, { transform: [{ translateX: slideAnim }] }]}>
+              <View style={styles.grid}>
                 {grid.map((date, i) => {
-                  if (!date) return <View key={`e-${i}`} style={{ width: DAY_W, height: DAY_W + 18 }} />;
-                  const dStr   = toKey(date);
-                  const subs   = paymentMap[dStr] || [];
-                  const isToday   = dStr === todayStr;
-                  const hasSubs   = subs.length > 0;
-                  const isSelected = dStr === popupDay;
-
+                  if (!date) return <View key={`empty-${i}`} style={{ width: DAY_W, height: DAY_W + 16 }} />;
+                  const dStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
                   return (
-                    <TouchableOpacity
+                    <DayCell
                       key={dStr}
-                      onPress={() => hasSubs ? setPopupDay(dStr === popupDay ? null : dStr) : null}
-                      activeOpacity={hasSubs ? 0.7 : 1}
-                      style={{ width: DAY_W, height: DAY_W + 18, alignItems: "center", paddingVertical: 2 }}
-                    >
-                      <View style={[
-                        styles.dayCell,
-                        isToday    && styles.dayCellToday,
-                        isSelected && styles.dayCellSelected,
-                        hasSubs && !isToday && !isSelected && { backgroundColor: "rgba(124,92,255,0.08)", borderWidth: 1, borderColor: "rgba(124,92,255,0.18)" },
-                      ]}>
-                        <Text style={[
-                          styles.dayNum,
-                          { color: isToday || isSelected ? "#fff" : theme.text },
-                        ]}>
-                          {date.getDate()}
-                        </Text>
-
-                        {/* Rounded emoji stack */}
-                        {hasSubs && (
-                          <View style={styles.emojiStack}>
-                            {subs.slice(0, 2).map((sub, si) => (
-                              <View key={sub.id} style={[styles.emojiBubble, { marginLeft: si === 0 ? 0 : -4 }]}>
-                                <Text style={{ fontSize: 8 }}>{safeEmoji(sub.icon)}</Text>
-                              </View>
-                            ))}
-                            {subs.length > 2 && (
-                              <View style={[styles.emojiBubble, { backgroundColor: ACCENT, marginLeft: -4 }]}>
-                                <Text style={{ fontSize: 7, color: "#fff", fontWeight: "800" }}>+{subs.length-2}</Text>
-                              </View>
-                            )}
-                          </View>
-                        )}
-                      </View>
-                    </TouchableOpacity>
+                      date={date}
+                      subs={paymentMap[dStr]}
+                      isToday={dStr === todayStr}
+                      isSelected={dStr === selectedDay}
+                      onPress={() => setSelectedDay(dStr === selectedDay ? null : dStr)}
+                    />
                   );
                 })}
-              </Animated.View>
+              </View>
             </View>
 
-            {/* Swipe hint */}
-            <Text style={[styles.swipeHint, { color: theme.subText }]}>← swipe to change month →</Text>
+            {/* ── Selected day detail ── */}
+            {selectedDay && selectedSubs.length > 0 && (
+              <DayDetailCard
+                dateStr={selectedDay}
+                subs={selectedSubs}
+                currency={currency}
+                formatPrice={formatPrice}
+              />
+            )}
+
+            {selectedDay && selectedSubs.length === 0 && (
+              <View style={styles.nothingDue}>
+                <Text style={styles.nothingDueTxt}>No payments due on this day</Text>
+              </View>
+            )}
 
             <View style={{ height: 110 }} />
           </ScrollView>
@@ -397,61 +402,48 @@ export default function CalendarScreen() {
 const styles = StyleSheet.create({
   scroll: { paddingHorizontal: 20, paddingTop: 10 },
 
-  screenTitle: { fontSize: 32, fontWeight: "900", letterSpacing: -1, marginBottom: 18, marginTop: 8 },
+  header:      { marginBottom: 6, marginTop: 8 },
+  screenTitle: { fontSize: 32, fontWeight: "900", color: "#1e293b", letterSpacing: -1 },
 
+  // Summary card
   summaryCard: {
-    borderRadius: 24, padding: 20, marginBottom: 16,
-    borderWidth: 1, alignItems: "center",
+    backgroundColor: "#fff", borderRadius: 24, padding: 20, marginBottom: 0,
+    borderWidth: 1, borderColor: "rgba(0,0,0,0.05)",
     shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 }, elevation: 2,
   },
-  summaryMonthLbl: { fontSize: 14, fontWeight: "600", marginBottom: 14 },
-  iconRow:   { flexDirection: "row", alignItems: "center", marginBottom: 14 },
+  summaryMonthLabel: { fontSize: 16, fontWeight: "600", color: "#94a3b8", marginBottom: 4 },
+  summaryAmount:     { fontSize: 52, fontWeight: "900", color: "#1e293b", letterSpacing: -2, marginBottom: 10 },
+  summaryRow:        { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginBottom: 2 },
+  summaryText:       { fontSize: 16, color: "#94a3b8", fontWeight: "500" },
+  summaryBold:       { color: "#1e293b", fontWeight: "800" },
   inlineIcon: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: "center", justifyContent: "center",
-    borderWidth: 2,
+    width: 22, height: 22, borderRadius: 7,
+    backgroundColor: "#f4f3ff", alignItems: "center", justifyContent: "center",
+    borderWidth: 1.5, borderColor: "#fff",
   },
-  summaryLine: { fontSize: 16, textAlign: "center", lineHeight: 24 },
-  summaryBold: { fontWeight: "800", fontSize: 16 },
-  eomRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 6, marginTop: 14, paddingTop: 14, borderTopWidth: StyleSheet.hairlineWidth, width: "100%",
-  },
-  eomLabel: { fontSize: 15 },
-  eomValue: { fontSize: 16, fontWeight: "800", color: "#ef4444" },
 
-  // Calendar card
-  calCard: {
-    borderRadius: 24, padding: 16,
-    borderWidth: 1,
+  // Divider
+  dottedDivider: {
+    marginVertical: 20, height: 1,
+    borderStyle: "dashed", borderWidth: 1, borderColor: "#d1d5db",
+  },
+
+  // Calendar
+  calWrap: {
+    backgroundColor: "#fff", borderRadius: 24, padding: 16,
+    borderWidth: 1, borderColor: "rgba(0,0,0,0.05)",
     shadowColor: "#000", shadowOpacity: 0.04, shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 }, elevation: 2,
-    overflow: "hidden",
   },
   monthNav:   { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-  navBtn:     { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
-  monthTitle: { fontSize: 16, fontWeight: "800" },
+  navBtn:     { width: 36, height: 36, borderRadius: 12, backgroundColor: "#f4f3ff", alignItems: "center", justifyContent: "center" },
+  monthTitle: { fontSize: 17, fontWeight: "800", color: "#1e293b" },
   dayHeaders: { flexDirection: "row", marginBottom: 4 },
-  dayHeader:  { fontSize: 11, fontWeight: "700", textAlign: "center" },
+  dayHeader:  { fontSize: 12, fontWeight: "700", color: "#94a3b8", textAlign: "center" },
   grid:       { flexDirection: "row", flexWrap: "wrap" },
 
-  dayCell: {
-    width: DAY_W - 4, minHeight: DAY_W - 4,
-    borderRadius: 999, // full circle
-    alignItems: "center", justifyContent: "center",
-    paddingVertical: 4,
-  },
-  dayCellToday:    { backgroundColor: "#1e293b" },
-  dayCellSelected: { backgroundColor: ACCENT },
-  dayNum:          { fontSize: 13, fontWeight: "600" },
-
-  emojiStack:  { flexDirection: "row", alignItems: "center", marginTop: 2 },
-  emojiBubble: {
-    width: 14, height: 14, borderRadius: 7,
-    backgroundColor: "#fff", alignItems: "center", justifyContent: "center",
-    borderWidth: 0.5, borderColor: "rgba(0,0,0,0.08)",
-  },
-
-  swipeHint: { textAlign: "center", fontSize: 12, marginTop: 10, opacity: 0.5 },
+  // No payments
+  nothingDue:    { alignItems: "center", paddingVertical: 24 },
+  nothingDueTxt: { fontSize: 14, color: "#94a3b8", fontWeight: "500" },
 });
