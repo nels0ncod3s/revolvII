@@ -7,9 +7,11 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
+import ServiceLogo, { getDomain } from "./ServiceLogo";
+import { Image } from "react-native";
 import SwipeableModal from "./SwipeableModal";
 import { useSubscriptions } from "../Context/subscriptionContext";
-import { useApp } from "../Context/appContext";
+import { useApp, F } from "../Context/appContext";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const EMOJI_ICONS = [
@@ -297,7 +299,7 @@ const rw = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 14,
   },
-  label: { fontSize: 16 },
+  label: { fontSize: 16, fontFamily: F.semibold },
   right: { flexDirection: "row", alignItems: "center", gap: 6 },
 });
 
@@ -453,11 +455,14 @@ const AddSubSheet = forwardRef((props, ref) => {
           <Card theme={theme}>
             {/* Icon + Name */}
             <View style={[frm.iconNameRow, { borderBottomColor: theme.border }]}>
-              <TouchableOpacity
-                style={[frm.iconBtn, { backgroundColor: theme.input }]}
-                onPress={() => setShowIcons(true)}
-              >
-                <Text style={frm.iconEmoji}>{displayIcon}</Text>
+              <TouchableOpacity onPress={() => setShowIcons(true)}>
+                <ServiceLogo
+                  name={name}
+                  emoji={displayIcon}
+                  size={52}
+                  borderRadius={14}
+                  bgColor={theme.input}
+                />
               </TouchableOpacity>
               <TextInput
                 style={[frm.nameInput, { color: theme.text }]}
@@ -587,7 +592,7 @@ const hdr = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   x: { fontSize: 14, fontWeight: "600" },
-  title: { fontSize: 17, fontWeight: "700" },
+  title: { fontSize: 17, fontFamily: F.bold },
   saveBtn: {
     width: 34, height: 34, borderRadius: 17,
     backgroundColor: "#8e44ad",
@@ -608,13 +613,13 @@ const frm = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   iconEmoji: { fontSize: 26 },
-  nameInput: { flex: 1, fontSize: 16 },
+  nameInput: { flex: 1, fontSize: 16, fontFamily: F.semibold },
 
   amountRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 14,
   },
-  amountLabel: { fontSize: 16 },
+  amountLabel: { fontSize: 16, fontFamily: F.semibold },
   amountRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   currBadge: {
     flexDirection: "row", alignItems: "center", gap: 3,
@@ -622,7 +627,7 @@ const frm = StyleSheet.create({
     borderRadius: 8,
   },
   currBadgeText: { fontSize: 15, fontWeight: "700" },
-  amountInput: { fontSize: 16, fontWeight: "600", minWidth: 80, textAlign: "right" },
+  amountInput: { fontSize: 16, fontFamily: F.semibold, minWidth: 80, textAlign: "right" },
 
   dateChip: {
     flexDirection: "row", alignItems: "center",
@@ -641,6 +646,6 @@ const frm = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 14,
   },
-  noteLabel: { fontSize: 16 },
+  noteLabel: { fontSize: 16, fontFamily: F.semibold },
   noteInput: { flex: 1, fontSize: 16 },
 });
