@@ -55,7 +55,7 @@ export const F = {
 export const AppProvider = ({ children }) => {
   const [darkMode, setDarkMode]         = useState(false);
   const [currencyCode, setCurrencyCode] = useState("NGN");
-  const [fontsLoaded]                   = useFonts({
+  const [fontsLoaded, fontError]        = useFonts({
     Nunito_400Regular,
     Nunito_500Medium,
     Nunito_600SemiBold,
@@ -65,11 +65,27 @@ export const AppProvider = ({ children }) => {
   });
 
   useEffect(() => {
-    AsyncStorage.multiGet(["@revolv_dark", "@revolv_currency"]).then((pairs) => {
-      if (pairs[0][1] !== null) setDarkMode(JSON.parse(pairs[0][1]));
-      if (pairs[1][1] !== null) setCurrencyCode(pairs[1][1]);
-    });
+    let active = true;
+    AsyncStorage.multiGet(["@revolv_dark", "@revolv_currency"])
+      .then((pairs) => {
+        if (!active) return;
+        const settings = Object.fromEntries(pairs);
+        // Accept only values written by this app; damaged settings use defaults.
+        setDarkMode(settings["@revolv_dark"] === "true");
+        const storedCurrency = settings["@revolv_currency"];
+        if (Object.prototype.hasOwnProperty.call(CURRENCIES, storedCurrency)) {
+          setCurrencyCode(storedCurrency);
+        }
+      })
+      .catch((error) => {
+        console.warn("Could not load saved settings; using defaults.", error);
+      });
+    return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (fontError) console.warn("Could not load Nunito; using system fonts.", fontError);
+  }, [fontError]);
 
   const toggleDark = async () => {
     const next = !darkMode;
@@ -120,8 +136,8 @@ export const AppProvider = ({ children }) => {
         statusBarStyle: "dark-content",
       };
 
-  // Don't render children until fonts are ready (prevents font flash)
-  if (!fontsLoaded) return null;
+  // A font failure must not keep the entire app on a blank screen.
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <AppContext.Provider
